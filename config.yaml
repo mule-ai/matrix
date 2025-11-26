@@ -1,0 +1,59 @@
+server:
+  port: 8080
+
+matrix:
+  homeserver: "https://matrix.example.com"
+  userid: "@bot:example.com"
+  accesstoken: "your_access_token_here"
+  deviceid: "device_id"
+  recoverykey: "your_recovery_key_here"
+  picklekey: "your_pickle_key_here"
+  roomid: "!roomid:example.com"
+  enable_encryption: true
+  sync_timeout: 120  # Timeout in seconds for initial sync (default: 120)
+  skip_initial_sync: false  # Set to true to skip waiting for initial sync
+
+webhook:
+  default: "http://localhost:3000/webhook"
+  template: |
+    {
+      "text": "{{.MESSAGE}}"
+    }
+  # Command-specific templates (optional)
+  command_templates:
+    meal: |
+      {
+        "action": "generate_menu",
+        "request": "{{.MESSAGE}}",
+        "type": "weekly"
+      }
+    alert: |
+      {
+        "alert_type": "notification",
+        "message": "{{.MESSAGE}}",
+        "priority": "high"
+      }
+  auth_tokens:
+    default: "Bearer your-default-token-here"
+    alert: "Bearer your-alert-token-here"
+    status: "Bearer your-status-token-here"
+  default_auth: "default"
+  commands:
+    alert: "http://localhost:3000/alert"
+    status: "http://localhost:3000/status"
+    meal: "http://localhost:3000/meal"
+  # JQ selector for parsing webhook responses
+  # Example: For OpenAI API response, use ".choices[0].message.content"
+  jq_selector: ".choices[0].message.content"
+  # Command-specific JQ selectors (optional)
+  command_selectors:
+    meal: ".menu"
+    alert: ".response"
+  # Skip sending reply if JQ selector returns empty string
+  skip_empty: true
+  # Webhook timeout in seconds (default: 30)
+  timeout: 30
+
+logging:
+  level: "debug"
+  file: ""
