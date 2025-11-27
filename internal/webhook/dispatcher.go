@@ -126,10 +126,11 @@ func (d *Dispatcher) Dispatch(message string, command string) (string, error) {
 	}
 
 	// Create HTTP request
-	d.logger.Info("Sending HTTP POST request to: %s", webhookURL)
+	d.logger.Info("Sending HTTP POST request to: %s (Message length: %d bytes, Has auth: %v)",
+		webhookURL, buf.Len(), authToken != "")
 	req, err := http.NewRequest("POST", webhookURL, &buf)
 	if err != nil {
-		d.logger.Error("Failed to create request: %v", err)
+		d.logger.Error("Failed to create request: %v (URL: %s)", err, webhookURL)
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -138,22 +139,36 @@ func (d *Dispatcher) Dispatch(message string, command string) (string, error) {
 	// Add authorization header if token is provided
 	if authToken != "" {
 		req.Header.Set("Authorization", authToken)
-		d.logger.Debug("Added authorization header to request")
+		d.logger.Debug("Added authorization header to request (token prefix: %s...)", authToken[:min(10, len(authToken))])
 	}
 
 	// Send HTTP request
+	startTime := time.Now()
 	resp, err := d.client.Do(req)
+	duration := time.Since(startTime)
+
 	if err != nil {
-		d.logger.Error("Failed to send webhook: %v", err)
+		d.logger.Error("Failed to send webhook: %v (URL: %s, Duration: %v)", err, webhookURL, duration)
 		return "", fmt.Errorf("failed to send webhook: %w", err)
 	}
 	defer resp.Body.Close()
 
-	d.logger.Info("Webhook response status: %d", resp.StatusCode)
+	d.logger.Info("Webhook response status: %d (URL: %s, Duration: %v)", resp.StatusCode, webhookURL, duration)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		d.logger.Error("Webhook returned status code: %d", resp.StatusCode)
-		return "", fmt.Errorf("webhook returned status code: %d", resp.StatusCode)
+		// Read response body for error details
+		body, _ := io.ReadAll(resp.Body)
+		bodyStr := string(body)
+
+		// Truncate long response bodies in error message
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500] + "... (truncated)"
+		}
+
+		d.logger.Error("Webhook returned status code: %d (URL: %s, Response Headers: %v, Response Body: %s)",
+			resp.StatusCode, webhookURL, resp.Header, bodyStr)
+		return "", fmt.Errorf("webhook returned status code: %d (URL: %s, Duration: %v, Response: %s)",
+			resp.StatusCode, webhookURL, duration, bodyStr)
 	}
 
 	// Read response body
@@ -257,4 +272,12 @@ func (d *Dispatcher) ExtractCommand(message string) string {
 		}
 	}
 	return ""
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

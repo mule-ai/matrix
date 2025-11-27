@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gomarkdown/markdown"
+	"github.com/gomarkdown/markdown/html"
+	"github.com/gomarkdown/markdown/parser"
 	"github.com/mule-ai/mule/matrix-microservice/internal/config"
 	"github.com/mule-ai/mule/matrix-microservice/internal/logger"
 	"maunium.net/go/mautrix"
@@ -464,8 +467,10 @@ func (c *Client) SendMessage(message string) error {
 	c.logger.Info("Sending message to Matrix room %s", c.roomID)
 
 	content := event.MessageEventContent{
-		MsgType: event.MsgText,
-		Body:    message,
+		MsgType:       event.MsgText,
+		Body:          message,
+		Format:        event.FormatHTML,
+		FormattedBody: formatMessage(message),
 	}
 
 	_, err := c.client.SendMessageEvent(context.Background(), id.RoomID(c.roomID), event.EventMessage, content)
@@ -476,4 +481,19 @@ func (c *Client) SendMessage(message string) error {
 
 	c.logger.Info("Message sent to Matrix successfully")
 	return nil
+}
+
+// formatMessage converts markdown to HTML for Matrix formatting
+func formatMessage(message string) string {
+	// Create markdown parser with extensions
+	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.NoEmptyLineBeforeBlock
+	p := parser.NewWithExtensions(extensions)
+	doc := p.Parse([]byte(message))
+
+	// Create HTML renderer with extensions
+	htmlFlags := html.CommonFlags | html.HrefTargetBlank
+	opts := html.RendererOptions{Flags: htmlFlags}
+	renderer := html.NewRenderer(opts)
+
+	return string(markdown.Render(doc, renderer))
 }
