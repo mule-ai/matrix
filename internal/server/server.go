@@ -119,7 +119,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type MessageRequest struct {
-	Message string `json:"message"`
+	Message  string `json:"message"`
+	AsFile   bool   `json:"as_file,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +134,22 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info("Received message: %s", req.Message)
+	// Set default values for optional parameters
+	if req.Filename == "" {
+		req.Filename = "message.md"
+	}
+
+	s.logger.Info("Received message: %s, as_file: %t, filename: %s", req.Message, req.AsFile, req.Filename)
 
 	// Send message to Matrix
-	if err := s.matrix.SendMessage(req.Message); err != nil {
+	var err error
+	if req.AsFile {
+		err = s.matrix.SendFile(req.Message, req.Filename)
+	} else {
+		err = s.matrix.SendMessage(req.Message)
+	}
+
+	if err != nil {
 		s.logger.Error("Failed to send message to Matrix: %v", err)
 		http.Error(w, "Failed to send message to Matrix", http.StatusInternalServerError)
 		return
