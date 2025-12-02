@@ -102,9 +102,16 @@ make docker-run
 1. `POST /message` - Send a message to Matrix and forward to webhook
    ```json
    {
-     "message": "Hello, world!"
+     "message": "Hello, world!",
+     "as_file": true,
+     "filename": "report.md"
    }
    ```
+
+   Parameters:
+   - `message` (required): The message content to send
+   - `as_file` (optional): Boolean flag to send the message as a file attachment. Defaults to `false`.
+   - `filename` (optional): Filename for the attachment when `as_file` is `true`. Defaults to `message.md`.
 
 2. `GET /health` - Health check endpoint
 3. `GET /status` - Detailed status including Matrix and webhook configuration

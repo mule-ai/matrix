@@ -483,6 +483,43 @@ func (c *Client) SendMessage(message string) error {
 	return nil
 }
 
+// SendFile sends a message as a file attachment to the Matrix room
+func (c *Client) SendFile(message, filename string) error {
+	c.logger.Info("Sending message as file to Matrix room %s with filename %s", c.roomID, filename)
+
+	// Convert message to bytes
+	data := []byte(message)
+
+	// Upload the file
+	resp, err := c.client.UploadBytesWithName(context.Background(), data, "text/markdown", filename)
+	if err != nil {
+		c.logger.Error("Failed to upload file to Matrix: %v", err)
+		return fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	// Create file message content
+	content := event.MessageEventContent{
+		MsgType:  event.MsgFile,
+		Body:     filename,
+		URL:      resp.ContentURI.CUString(),
+		FileName: filename,
+		Info: &event.FileInfo{
+			MimeType: "text/markdown",
+			Size:     len(data),
+		},
+	}
+
+	// Send the file message
+	_, err = c.client.SendMessageEvent(context.Background(), id.RoomID(c.roomID), event.EventMessage, &content)
+	if err != nil {
+		c.logger.Error("Failed to send file message to Matrix: %v", err)
+		return fmt.Errorf("failed to send file message: %w", err)
+	}
+
+	c.logger.Info("File message sent to Matrix successfully")
+	return nil
+}
+
 // formatMessage converts markdown to HTML for Matrix formatting
 func formatMessage(message string) string {
 	// Create markdown parser with extensions
