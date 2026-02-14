@@ -213,17 +213,17 @@ func (d *Dispatcher) parseResponseWithJQ(responseBody []byte, selector string) (
 	// Execute query
 	iter := query.Run(data)
 	var results []string
-	
+
 	for {
 		v, ok := iter.Next()
 		if !ok {
 			break
 		}
-		
+
 		if err, ok := v.(error); ok {
 			return "", fmt.Errorf("JQ execution error: %w", err)
 		}
-		
+
 		// Convert result to string
 		var resultStr string
 		switch val := v.(type) {
@@ -239,15 +239,15 @@ func (d *Dispatcher) parseResponseWithJQ(responseBody []byte, selector string) (
 			}
 			resultStr = string(jsonBytes)
 		}
-		
+
 		results = append(results, resultStr)
 	}
-	
+
 	// If no results or empty results and skip_empty is true, return empty string
 	if len(results) == 0 || (d.config.SkipEmpty && d.allEmpty(results)) {
 		return "", nil
 	}
-	
+
 	// Join multiple results with newline
 	return strings.Join(results, "\n"), nil
 }
@@ -272,6 +272,45 @@ func (d *Dispatcher) ExtractCommand(message string) string {
 		}
 	}
 	return ""
+}
+
+// HasCommandPrefix checks if the message starts with the configured command prefix
+// If CommandPrefix is empty and EnableCommands is true, it matches all messages
+func (d *Dispatcher) HasCommandPrefix(message string) bool {
+	if d.config.CommandPrefix == "" {
+		// If prefix is empty but commands are enabled, treat as match all
+		return d.config.EnableCommands
+	}
+	return strings.HasPrefix(message, d.config.CommandPrefix)
+}
+
+// GetCommandFromPrefix extracts the command and arguments from a message with command prefix
+// If CommandPrefix is empty and EnableCommands is true, the entire message is treated as arguments
+func (d *Dispatcher) GetCommandFromPrefix(message string) (command string, args string) {
+	if !d.HasCommandPrefix(message) {
+		return "", ""
+	}
+
+	// If prefix is empty (match all), treat entire message as args
+	if d.config.CommandPrefix == "" {
+		return "", strings.TrimSpace(message)
+	}
+
+	// Remove the prefix
+	rest := strings.TrimPrefix(message, d.config.CommandPrefix)
+	rest = strings.TrimSpace(rest)
+
+	// Extract command name (first word after prefix)
+	parts := strings.Fields(rest)
+	if len(parts) > 0 {
+		command = parts[0]
+		// Everything after the command is the arguments
+		if len(parts) > 1 {
+			args = strings.Join(parts[1:], " ")
+		}
+	}
+
+	return command, args
 }
 
 // min returns the minimum of two integers

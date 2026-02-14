@@ -48,6 +48,14 @@ webhook:
   commands:
     alert: "http://localhost:3000/alert"
     status: "http://localhost:3000/status"
+  # Command Execution Configuration
+  enable_commands: true
+  command_prefix: "/cmd"
+  default_command: "pi -p"
+  session_timeout: 600
+  command_templates:
+    pi: "pi -p {{.MESSAGE}}"
+    shell: "sh -c {{.MESSAGE}}"
 
 logging:
   level: "info"
@@ -123,6 +131,47 @@ Messages that start with `/` followed by a command name will be routed to specif
 - `/alert Something happened` - Routes to the "alert" webhook
 - `/status check` - Routes to the "status" webhook
 - `/unknown command` - Routes to the default webhook
+
+### Command Execution
+
+The service can execute shell commands directly when messages start with a specific prefix (default: `/cmd`):
+
+```yaml
+webhook:
+  enable_commands: true       # Enable command execution (default: false)
+  command_prefix: "/cmd"      # Prefix to trigger commands (default: "/cmd")
+  default_command: "pi -p"    # Default command template
+  session_timeout: 600        # Session timeout in seconds (10 minutes)
+  command_templates:          # Optional per-command templates
+    pi: "pi -p {{.MESSAGE}}"
+    shell: "sh -c {{.MESSAGE}}"
+```
+
+**Message Placeholders:**
+- `{{.MESSAGE}}` - The user's message (after the command prefix)
+- `{{.CONTEXT}}` - Previous command output (for conversation context)
+
+**Examples:**
+
+1. Send `/cmd hello world` → executes: `echo "hello world"` (if default_command is set)
+2. Send `/pi What is Go?` → executes: `pi -p "What is Go?"` (using command_templates)
+3. Send `/shell ls -la` → executes: `sh -c "ls -la"`
+
+### Thread Continuation
+
+When users reply to the bot's messages in a Matrix thread:
+
+1. The bot detects the thread (via `RelatesTo.InReplyTo` or thread parent)
+2. The bot retrieves the existing session for that thread
+3. Command execution continues in the same session context
+4. Previous command output is available via `{{.CONTEXT}}`
+
+This enables multi-turn conversations where the bot remembers previous commands within a thread.
+
+**Session Management:**
+- Sessions are keyed by thread root event ID (for thread messages) or user ID (for non-thread messages)
+- Sessions expire after `session_timeout` seconds of inactivity
+- Each session stores: command template, previous context, last activity timestamp
 
 ### Bidirectional Communication
 
