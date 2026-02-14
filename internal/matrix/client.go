@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/gomarkdown/markdown"
 	"github.com/gomarkdown/markdown/html"
 	"github.com/gomarkdown/markdown/parser"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/mule-ai/mule/matrix-microservice/internal/config"
 	"github.com/mule-ai/mule/matrix-microservice/internal/logger"
 	"maunium.net/go/mautrix"
@@ -19,12 +21,11 @@ import (
 	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // MessageHandler defines the interface for handling incoming Matrix messages
 type MessageHandler interface {
-	HandleMessage(roomID id.RoomID, sender id.UserID, message string)
+	HandleMessage(roomID id.RoomID, sender id.UserID, message string, inReplyToEventID id.EventID, threadRootEventID id.EventID, eventID id.EventID)
 }
 
 type sessionRequestInfo struct {
@@ -33,15 +34,15 @@ type sessionRequestInfo struct {
 }
 
 type Client struct {
-	client         *mautrix.Client
-	roomID         string
-	deviceID       string
-	logger         *logger.Logger
-	cryptoHelper   *cryptohelper.CryptoHelper
-	config         *config.MatrixConfig
-	messageHandler MessageHandler
-	mentionRegex   *regexp.Regexp
-	slashCommandRegex *regexp.Regexp
+	client                *mautrix.Client
+	roomID                string
+	deviceID              string
+	logger                *logger.Logger
+	cryptoHelper          *cryptohelper.CryptoHelper
+	config                *config.MatrixConfig
+	messageHandler        MessageHandler
+	mentionRegex          *regexp.Regexp
+	slashCommandRegex     *regexp.Regexp
 	requestedSessionMutex sync.Mutex
 	requestedSessions     map[string]*sessionRequestInfo
 }
@@ -55,14 +56,39 @@ func New(cfg *config.MatrixConfig, logger *logger.Logger) (*Client, error) {
 		return nil, fmt.Errorf("failed to create Matrix client: %w", err)
 	}
 
-	client.DeviceID = id.DeviceID(cfg.DeviceID)
+	// If device ID is empty, we need to login to get a device ID
+	if cfg.DeviceID == "" {
+		logger.Info("No device ID specified, performing login...")
+		loginResp, err := client.Login(context.Background(), &mautrix.ReqLogin{
+			Type:                     "m.login.password",
+			Identifier:               mautrix.UserIdentifier{Type: mautrix.IdentifierTypeUser, User: cfg.UserID},
+			Password:                 "drow22ap",
+			DeviceID:                 "MULE_BOT",
+			InitialDeviceDisplayName: "Mule AI Bot",
+		})
+		if err != nil {
+			logger.Error("Failed to login: %v", err)
+			return nil, fmt.Errorf("failed to login: %w", err)
+		}
+		
+		// Use the device ID returned by the server
+		cfg.DeviceID = string(loginResp.DeviceID)
+		cfg.AccessToken = loginResp.AccessToken // Use the new access token
+		logger.Info("Logged in with device ID: %s (requested: MULE_BOT)", loginResp.DeviceID)
+
+		// Update client with new access token and device ID
+		client.AccessToken = loginResp.AccessToken
+		client.DeviceID = loginResp.DeviceID
+	} else {
+		client.DeviceID = id.DeviceID(cfg.DeviceID)
+	}
 
 	c := &Client{
-		client:   client,
-		roomID:   cfg.RoomID,
-		deviceID: cfg.DeviceID,
-		logger:   logger,
-		config:   cfg,
+		client:            client,
+		roomID:            cfg.RoomID,
+		deviceID:          cfg.DeviceID,
+		logger:            logger,
+		config:            cfg,
 		requestedSessions: make(map[string]*sessionRequestInfo),
 	}
 
@@ -103,6 +129,11 @@ func New(cfg *config.MatrixConfig, logger *logger.Logger) (*Client, error) {
 
 func (c *Client) SetMessageHandler(handler MessageHandler) {
 	c.messageHandler = handler
+}
+
+// GetDeviceID returns the current device ID (may have changed after login)
+func (c *Client) GetDeviceID() string {
+	return string(c.client.DeviceID)
 }
 
 func (c *Client) setupEncryption() error {
@@ -179,6 +210,9 @@ func (c *Client) setupEncryption() error {
 		}
 	}
 
+	// Give a moment for the device to be registered on the server after sync
+	time.Sleep(2 * time.Second)
+
 	// Share keys with the server
 	c.logger.Info("Uploading device keys...")
 	ctx := context.Background()
@@ -192,7 +226,7 @@ func (c *Client) setupEncryption() error {
 	if err := c.verifyWithRecoveryKey(machine); err != nil {
 		c.logger.Error("Failed with initial verification: %v", err)
 		time.Sleep(5 * time.Second)
-		
+
 		c.logger.Info("Retrying key verification...")
 		if err := c.verifyWithRecoveryKey(machine); err != nil {
 			return fmt.Errorf("failed to verify with recovery key after retry: %w", err)
@@ -214,6 +248,39 @@ func (c *Client) setupCryptoHelper() (*cryptohelper.CryptoHelper, error) {
 
 	c.logger.Info("Initializing crypto helper database...")
 	if err := helper.Init(context.Background()); err != nil {
+		// Handle "olm account is not marked as shared" error
+		// This happens when keys exist on server but local account isn't marked as shared
+		if strings.Contains(err.Error(), "olm account is not marked as shared") {
+			c.logger.Warn("Olm account not marked as shared, deleting database and recreating...")
+
+			// Close helper and delete database
+			helper.Close()
+
+			// Delete the crypto database to start fresh
+			dbFiles := []string{dbPath, dbPath + "-shm", dbPath + "-wal"}
+			for _, f := range dbFiles {
+				if _, err := os.Stat(f); err == nil {
+					if rmErr := os.Remove(f); rmErr != nil {
+						c.logger.Warn("Failed to remove crypto db file %s: %v", f, rmErr)
+					} else {
+						c.logger.Info("Removed crypto db file: %s", f)
+					}
+				}
+			}
+
+			// Create fresh helper
+			helper, err = cryptohelper.NewCryptoHelper(c.client, pickleKey, dbPath)
+			if err != nil {
+				return nil, fmt.Errorf("NewCryptoHelper failed after db reset: %w", err)
+			}
+
+			c.logger.Info("Retrying crypto helper initialization with fresh database...")
+			if retryErr := helper.Init(context.Background()); retryErr != nil {
+				return nil, fmt.Errorf("CryptoHelper Init still failed after db reset: %w", retryErr)
+			}
+			c.logger.Info("Crypto helper database initialized successfully after reset")
+			return helper, nil
+		}
 		return nil, fmt.Errorf("CryptoHelper Init failed: %w", err)
 	}
 	c.logger.Info("Crypto helper database initialized")
@@ -305,6 +372,11 @@ func (c *Client) shouldRequestSession(sessionID string) bool {
 }
 
 func (c *Client) attemptDecryption(ctx context.Context, evt *event.Event) (*event.Event, error) {
+	// Crypto helper not initialized - can't decrypt
+	if c.cryptoHelper == nil {
+		return nil, fmt.Errorf("crypto helper is nil, encryption not initialized")
+	}
+
 	if evt.Content.Parsed != nil {
 		decrypted, err := c.cryptoHelper.Decrypt(ctx, evt)
 		if err == nil {
@@ -457,20 +529,75 @@ func (c *Client) processEvent(ctx context.Context, evt *event.Event) {
 		c.logger.Info("Processing message from user: username=%s, sender_id=%s, message=%s",
 			username, senderID, body)
 
+		// Thread detection - check if this message is a reply or in a thread
+		var inReplyToEventID id.EventID
+		var threadRootEventID id.EventID
+
+		relatesTo := messageContent.RelatesTo
+		if relatesTo != nil {
+			c.logger.Debug("RelatesTo struct: %+v", relatesTo)
+			c.logger.Debug("RelatesTo raw: %+v", messageContent.RelatesTo)
+			
+			// Check for reply (inReplyTo)
+			if relatesTo.GetReplyTo() != "" {
+				inReplyToEventID = relatesTo.GetReplyTo()
+				c.logger.Info("Message is a reply to event: %s", inReplyToEventID)
+			}
+
+			// Check for thread (thread parent)
+			threadParent := relatesTo.GetThreadParent()
+			if threadParent != "" {
+				threadRootEventID = threadParent
+				c.logger.Info("Message is in a thread with root event: %s", threadRootEventID)
+			}
+		} else {
+			c.logger.Debug("RelatesTo is nil for message")
+		}
+
 		if c.messageHandler != nil {
-			c.messageHandler.HandleMessage(evt.RoomID, evt.Sender, body)
+			c.messageHandler.HandleMessage(evt.RoomID, evt.Sender, body, inReplyToEventID, threadRootEventID, evt.ID)
 		}
 	}
 }
 
-func (c *Client) SendMessage(message string) error {
+// SendMessage sends a message to the Matrix room with optional reply and mention support
+func (c *Client) SendMessage(message string, opts ...SendMessageOption) error {
 	c.logger.Info("Sending message to Matrix room %s", c.roomID)
+
+	// Apply default options
+	options := &SendMessageOptions{
+		InReplyToEventID: "",
+		MentionUserID:    "",
+	}
+
+	// Override with provided options
+	for _, opt := range opts {
+		opt(options)
+	}
 
 	content := event.MessageEventContent{
 		MsgType:       event.MsgText,
 		Body:          message,
 		Format:        event.FormatHTML,
 		FormattedBody: formatMessage(message),
+	}
+
+	// Set reply if inReplyToEventID is provided
+	if options.InReplyToEventID != "" {
+		c.logger.Debug("Setting reply to event: %s", options.InReplyToEventID)
+		content.SetReply(&event.Event{
+			ID:     options.InReplyToEventID,
+			RoomID: id.RoomID(c.roomID),
+			Sender: id.UserID(c.config.UserID),
+		})
+	}
+
+	// Set mentions if mentionUserID is provided
+	if options.MentionUserID != "" {
+		c.logger.Debug("Setting mention for user: %s", options.MentionUserID)
+		content.Mentions = &event.Mentions{
+			UserIDs: []id.UserID{options.MentionUserID},
+		}
 	}
 
 	_, err := c.client.SendMessageEvent(context.Background(), id.RoomID(c.roomID), event.EventMessage, content)
@@ -481,6 +608,29 @@ func (c *Client) SendMessage(message string) error {
 
 	c.logger.Info("Message sent to Matrix successfully")
 	return nil
+}
+
+// SendMessageOptions holds optional parameters for SendMessage
+type SendMessageOptions struct {
+	InReplyToEventID id.EventID
+	MentionUserID    id.UserID
+}
+
+// SendMessageOption is a function that modifies SendMessageOptions
+type SendMessageOption func(*SendMessageOptions)
+
+// WithReplyTo sets the event ID to reply to
+func WithReplyTo(eventID id.EventID) SendMessageOption {
+	return func(opts *SendMessageOptions) {
+		opts.InReplyToEventID = eventID
+	}
+}
+
+// WithMention sets the user ID to mention in the message
+func WithMention(userID id.UserID) SendMessageOption {
+	return func(opts *SendMessageOptions) {
+		opts.MentionUserID = userID
+	}
 }
 
 // SendFile sends a message as a file attachment to the Matrix room

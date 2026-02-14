@@ -1,10 +1,40 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"os"
 
 	"github.com/spf13/viper"
 )
+
+func GeneratePickleKey() string {
+	// Generate a 32-byte random key for encryption
+	bytes := make([]byte, 32)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate random key: %v", err))
+	}
+	return base64.StdEncoding.EncodeToString(bytes)
+}
+
+func SaveConfig(config *Config) error {
+	// Write the current config back to the file
+	viper.Set("matrix.picklekey", config.Matrix.PickleKey)
+	viper.Set("matrix.accesstoken", config.Matrix.AccessToken)
+	viper.Set("matrix.deviceid", config.Matrix.DeviceID)
+
+	// Try to find the config file path
+	configFile := "config.yaml"
+	if _, err := os.Stat("./config.yaml"); err == nil {
+		configFile = "./config.yaml"
+	} else if _, err := os.Stat("../config.yaml"); err == nil {
+		configFile = "../config.yaml"
+	}
+
+	return viper.WriteConfigAs(configFile)
+}
 
 type Config struct {
 	Server  ServerConfig  `mapstructure:"server"`
@@ -41,6 +71,12 @@ type WebhookConfig struct {
 	CommandSelectors map[string]string `mapstructure:"command_selectors"`
 	SkipEmpty        bool              `mapstructure:"skip_empty"`
 	Timeout          int               `mapstructure:"timeout"`
+	// Command execution settings
+	EnableCommands bool   `mapstructure:"enable_commands"`
+	CommandPrefix  string `mapstructure:"command_prefix"`
+	SessionTimeout int    `mapstructure:"session_timeout"`
+	// Default command to execute (e.g., "pi -p")
+	DefaultCommand string `mapstructure:"default_command"`
 }
 
 type LoggingConfig struct {
@@ -64,6 +100,11 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("matrix.enable_encryption", true)
 	viper.SetDefault("matrix.sync_timeout", 120)
 	viper.SetDefault("matrix.skip_initial_sync", false)
+	// Command execution defaults
+	viper.SetDefault("webhook.enable_commands", false)
+	viper.SetDefault("webhook.command_prefix", "/cmd")
+	viper.SetDefault("webhook.session_timeout", 600) // 10 minutes
+	viper.SetDefault("webhook.default_command", "")
 
 	// Environment variable support
 	viper.AutomaticEnv()
@@ -78,4 +119,13 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// EnsurePickleKey generates a pickle key if one is not set in the config
+func (c *Config) EnsurePickleKey() bool {
+	if c.Matrix.PickleKey == "" || c.Matrix.PickleKey == "your_pickle_key_here" {
+		c.Matrix.PickleKey = GeneratePickleKey()
+		return true
+	}
+	return false
 }

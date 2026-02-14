@@ -19,6 +19,16 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Generate pickle key if not set
+	if cfg.EnsurePickleKey() {
+		log.Println("Generated new pickle key, saving to config...")
+		if err := config.SaveConfig(cfg); err != nil {
+			log.Printf("Warning: Failed to save pickle key to config: %v", err)
+		} else {
+			log.Println("Pickle key saved to config.yaml")
+		}
+	}
+
 	// Initialize logger
 	appLogger, err := logger.New(&cfg.Logging)
 	if err != nil {
@@ -32,6 +42,14 @@ func main() {
 	if err != nil {
 		appLogger.Error("Failed to create server: %v", err)
 		log.Fatalf("Failed to create server: %v", err)
+	}
+
+	// After Matrix client is initialized, save any updated credentials
+	// (e.g., device ID may have changed after first login)
+	if err := config.SaveConfig(cfg); err != nil {
+		appLogger.Warn("Failed to save config after startup: %v", err)
+	} else {
+		appLogger.Debug("Config saved successfully")
 	}
 
 	// Handle shutdown gracefully
