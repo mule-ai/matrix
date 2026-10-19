@@ -1,10 +1,10 @@
 module github.com/mule-ai/mule/matrix-microservice
 
-go 1.24
+go 1.26.0
 
 require (
-	github.com/go-chi/chi/v5 v5.0.12
-	github.com/gomarkdown/markdown v0.0.0-20250810172220-2e2c11897d1a
+	github.com/go-chi/chi/v5 v5.5.0
+	github.com/gomarkdown/markdown v0.0.0-20261011113952-f83953680332
 	github.com/itchyny/gojq v0.12.17
 	github.com/mattn/go-sqlite3 v1.14.27
 	github.com/spf13/viper v1.19.0
@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.1.0 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/itchyny/timefmt-go v0.1.6 // indirect
@@ -37,10 +37,10 @@ require (
 	go.mau.fi/util v0.8.6 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
-	golang.org/x/sys v0.32.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
